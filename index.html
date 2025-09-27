@@ -5,141 +5,66 @@
 		<title>Гостей всего</title>
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<style>
-			:root {
-				--bg: #fafafa;
-				--ink: #111111;
-				--muted: #6b7280;
-				--border: #e5e7eb;
-			}
-			* {
-				box-sizing: border-box;
-			}
 			html,
 			body {
-				height: 100%;
 				margin: 0;
+				height: 100%;
+				background: #1c1c1c;
+				color: #e7eefc;
+				font-family: Inter, system-ui, Arial;
 			}
-			body {
-				display: grid;
-				grid-template-rows: auto 1fr;
-				background: var(--bg);
-				color: var(--ink);
-				font-family: -apple-system, system-ui, "SF Pro Text", Segoe UI, Roboto,
-					Arial, "Noto Sans", sans-serif;
-				line-height: 1.3;
-			}
-
-			/* Верхняя панель с календарём */
-			.bar {
+			.wrap {
 				display: flex;
-				gap: 12px;
 				align-items: center;
 				justify-content: center;
-				padding: 16px clamp(12px, 4vw, 28px);
-				border-bottom: 1px solid var(--border);
-				background: #fff;
-				position: sticky;
-				top: 0;
+				height: 100%;
+				flex-direction: column;
+				gap: 24px;
 			}
-			.bar label {
-				font-size: 14px;
-				color: var(--muted);
-				letter-spacing: 0.02em;
-			}
-			.bar input[type="date"] {
-				font: inherit;
-				font-size: 16px;
-				color: var(--ink);
-				padding: 8px 10px;
-				border: 1px solid var(--border);
-				border-radius: 10px;
-				background: #fff;
-				min-width: 200px;
-			}
-
-			/* Контейнер цифры */
-			.stage {
-				display: grid;
-				place-items: center;
-				padding: clamp(12px, 4vw, 36px);
+			.label {
+				font-size: 3vw;
+				opacity: 0.8;
 			}
 			.value {
+				font-size: clamp(120px, 35vw, 520px);
 				font-weight: 800;
-				letter-spacing: 0.015em;
-				font-variant-numeric: tabular-nums lining-nums;
 				line-height: 1;
-				text-align: center;
-				user-select: none;
-				/* от очень крупной до максимальной */
-				font-size: clamp(96px, 32vw, 480px);
-			}
-
-			/* Небольшая подсказка об ошибке (не навязчиво, серым) */
-			.hint {
-				margin-top: 12px;
-				font-size: 14px;
-				color: var(--muted);
-				visibility: hidden;
+				letter-spacing: 2px;
 				text-align: center;
 			}
-			.hint.visible {
-				visibility: visible;
+			@media (max-width: 800px) {
+				.label {
+					font-size: 6vw;
+				}
+				.value {
+					font-size: 42vw;
+				}
 			}
 		</style>
 	</head>
 	<body>
-		<div class="bar">
-			<label for="date">Дата</label>
-			<input id="date" type="date" />
-		</div>
-
-		<div class="stage">
+		<div class="wrap">
+			<div class="label">Гостей всего</div>
 			<div id="num" class="value">—</div>
-			<div id="hint" class="hint">Не удалось получить данные</div>
 		</div>
-
 		<script>
 			const API = "/api/guests"
 			const REFRESH_MS = 5 * 60 * 1000 // 5 минут
-			const numEl = document.getElementById("num")
-			const hintEl = document.getElementById("hint")
-			const dateEl = document.getElementById("date")
-
-			function todayISO() {
-				const d = new Date()
-				const tzOff = d.getTimezoneOffset() // приводим к локальному календарю устройства
-				const local = new Date(d.getTime() - tzOff * 60000)
-				return local.toISOString().slice(0, 10)
-			}
-
 			async function load() {
-				const d = dateEl.value
-				const url = d ? `${API}?date=${d}` : API
 				try {
-					const res = await fetch(url, { cache: "no-store" })
-					const data = await res.json().catch(() => ({}))
-					if (res.ok && typeof data.value === "number") {
-						numEl.textContent = data.value
-						hintEl.classList.remove("visible")
+					const r = await fetch(API, { cache: "no-store" })
+					const j = await r.json()
+					if (r.ok && typeof j.value === "number") {
+						document.getElementById("num").textContent = j.value
 					} else {
-						numEl.textContent = "—"
-						hintEl.classList.add("visible")
+						document.getElementById("num").textContent = "—"
 					}
 				} catch (e) {
-					numEl.textContent = "—"
-					hintEl.classList.add("visible")
+					document.getElementById("num").textContent = "—"
 				}
 			}
-
-			// Инициализация: сегодняшняя дата
-			dateEl.value = todayISO()
-			dateEl.addEventListener("change", load)
-
-			// Первая загрузка и периодическое обновление
 			load()
 			setInterval(load, REFRESH_MS)
-
-			// Обновлять при возвращении страницы из сна/фонового режима
 			document.addEventListener("visibilitychange", () => {
 				if (!document.hidden) load()
 			})
