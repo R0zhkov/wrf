@@ -10,31 +10,61 @@
 				margin: 0;
 				height: 100%;
 				background: #1c1c1c;
-				color: #e7eefc;
-				font-family: Inter, system-ui, Arial;
+				color: #f5f5f5;
+				font-family: -apple-system, system-ui, "SF Pro Display", Segoe UI,
+					Roboto, Arial, sans-serif;
 			}
-			.wrap {
+			* {
+				box-sizing: border-box;
+			}
+
+			/* верхняя панель */
+			.bar {
+				display: flex;
+				gap: 12px;
+				align-items: center;
+				justify-content: center;
+				padding: 16px;
+				border-bottom: 1px solid #333;
+				background: #1f1f1f;
+				position: sticky;
+				top: 0;
+			}
+			.bar label {
+				font-size: 15px;
+				color: #aaa;
+			}
+			.bar input[type="date"] {
+				font: inherit;
+				font-size: 16px;
+				color: #f5f5f5;
+				background: #2a2a2a;
+				border: 1px solid #444;
+				border-radius: 8px;
+				padding: 6px 10px;
+			}
+
+			/* цифра */
+			.stage {
 				display: flex;
 				align-items: center;
 				justify-content: center;
-				height: 100%;
-				flex-direction: column;
-				gap: 24px;
-			}
-			.label {
-				font-size: 3vw;
-				opacity: 0.8;
+				height: calc(100% - 64px);
+				padding: 20px;
 			}
 			.value {
-				font-size: clamp(120px, 35vw, 520px);
 				font-weight: 800;
 				line-height: 1;
 				letter-spacing: 2px;
 				text-align: center;
+				font-variant-numeric: tabular-nums lining-nums;
+				font-size: clamp(120px, 35vw, 540px);
+				user-select: none;
 			}
+
 			@media (max-width: 800px) {
-				.label {
-					font-size: 6vw;
+				.bar label {
+					font-size: 14px;
 				}
 				.value {
 					font-size: 42vw;
@@ -43,26 +73,45 @@
 		</style>
 	</head>
 	<body>
-		<div class="wrap">
-			<div class="label">Гостей всего</div>
+		<div class="bar">
+			<label for="date">Дата</label>
+			<input id="date" type="date" />
+		</div>
+		<div class="stage">
 			<div id="num" class="value">—</div>
 		</div>
 		<script>
 			const API = "/api/guests"
-			const REFRESH_MS = 5 * 60 * 1000 // 5 минут
+			const REFRESH_MS = 5 * 60 * 1000
+			const numEl = document.getElementById("num")
+			const dateEl = document.getElementById("date")
+
+			function todayISO() {
+				const d = new Date()
+				const tz = d.getTimezoneOffset()
+				const local = new Date(d.getTime() - tz * 60000)
+				return local.toISOString().slice(0, 10)
+			}
+
 			async function load() {
+				const d = dateEl.value
+				const url = d ? `${API}?date=${d}` : API
 				try {
-					const r = await fetch(API, { cache: "no-store" })
-					const j = await r.json()
+					const r = await fetch(url, { cache: "no-store" })
+					const j = await r.json().catch(() => ({}))
 					if (r.ok && typeof j.value === "number") {
-						document.getElementById("num").textContent = j.value
+						numEl.textContent = j.value
 					} else {
-						document.getElementById("num").textContent = "—"
+						numEl.textContent = "—"
 					}
 				} catch (e) {
-					document.getElementById("num").textContent = "—"
+					numEl.textContent = "—"
 				}
 			}
+
+			dateEl.value = todayISO()
+			dateEl.addEventListener("change", load)
+
 			load()
 			setInterval(load, REFRESH_MS)
 			document.addEventListener("visibilitychange", () => {
