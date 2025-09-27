@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8" />
+		<title>Гостей всего</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<style>
+			html,
+			body {
+				margin: 0;
+				height: 100%;
+				background: #0b1220;
+				color: #e7eefc;
+				font-family: -apple-system, Inter, Roboto, Arial;
+			}
+			.wrap {
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				height: 100%;
+				flex-direction: column;
+				gap: 24px;
+			}
+			.label {
+				font-size: 3vw;
+				opacity: 0.8;
+			}
+			.value {
+				font-size: 18vw;
+				font-weight: 800;
+				line-height: 1;
+				letter-spacing: 2px;
+			}
+			.meta {
+				font-size: 3vw;
+				opacity: 0.6;
+			}
+			@media (max-width: 800px) {
+				.label {
+					font-size: 6vw;
+				}
+				.value {
+					font-size: 30vw;
+				}
+				.meta {
+					font-size: 4vw;
+				}
+			}
+			.controls {
+				position: fixed;
+				top: 16px;
+				right: 16px;
+				opacity: 0.5;
+			}
+			.controls input {
+				font-size: 14px;
+				padding: 6px;
+				border-radius: 8px;
+				border: 1px solid #344;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="wrap">
+			<div class="label">Гостей всего</div>
+			<div id="num" class="value">—</div>
+			<div id="meta" class="meta">обновляю…</div>
+		</div>
+
+		<div class="controls">
+			<input id="date" type="date" />
+		</div>
+
+		<script>
+			const api = "/api/guests" // тот самый серверлес-эндпоинт
+			const REFRESH_MS = 5 * 60 * 1000 // 5 минут
+
+			function fmt(ts) {
+				return new Date(ts * 1000).toLocaleString()
+			}
+
+			async function load() {
+				const d = document.getElementById("date").value
+				const url = d ? `${api}?date=${d}` : api
+				try {
+					const r = await fetch(url, { cache: "no-store" })
+					const j = await r.json()
+					if (r.ok && typeof j.value === "number") {
+						document.getElementById("num").textContent = j.value
+						document.getElementById("meta").textContent = `Обновлено: ${fmt(
+							j.updated_at
+						)}${j.date ? " · " + j.date : ""}`
+					} else {
+						document.getElementById("num").textContent = "—"
+						document.getElementById("meta").textContent = `Ошибка: ${
+							j.error || r.status
+						}`
+					}
+				} catch (e) {
+					document.getElementById("meta").textContent = "Ошибка сети"
+				}
+			}
+
+			// Проставим дефолтную дату (сегодня)
+			document.getElementById("date").value = new Date()
+				.toISOString()
+				.slice(0, 10)
+			document.getElementById("date").addEventListener("change", load)
+
+			load()
+			setInterval(load, REFRESH_MS)
+		</script>
+	</body>
+</html>
