@@ -127,7 +127,7 @@ async function fetchFromClientomer() {
 		}
 
 		// Немного подождём, затем дождёмся нужного блока
-		await page.waitForTimeout(1200)
+		await page.waitForTimeout(5000)
 		try {
 			await page.waitForURL(`**/${POINT_ID}`, { timeout: 45000 })
 		} catch (e) {
