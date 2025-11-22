@@ -84,7 +84,7 @@ async function fetchFromClientomer() {
 		// === КЛЮЧЕВОЕ: отключаем headless_shell и используем обычный Chromium ===
 		browser = await chromium.launch({
 			headless: true,
-			channel: null, // ← отключает headless_shell и системные браузеры
+			// ← отключает headless_shell и системные браузеры
 			args: [
 				"--no-sandbox",
 				"--disable-setuid-sandbox",
