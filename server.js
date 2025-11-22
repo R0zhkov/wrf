@@ -80,6 +80,12 @@ async function fetchFromClientomer() {
 	let browser = null
 	let context = null
 	try {
+		console.log("fetchFromClientomer: starting browser launch...")
+		console.log(
+			"PLAYWRIGHT_BROWSERS_PATH =",
+			process.env.PLAYWRIGHT_BROWSERS_PATH || "(not set)"
+		)
+
 		browser = await chromium.launch({
 			headless: true,
 			args: [
@@ -99,35 +105,162 @@ async function fetchFromClientomer() {
 
 		const page = await context.newPage()
 
-		await page.goto(`https://cabinet.clientomer.ru/${POINT_ID}`, {
+		const targetUrl = `https://cabinet.clientomer.ru/${POINT_ID}`
+		console.log("fetchFromClientomer: goto", targetUrl)
+		await page.goto(targetUrl, {
 			waitUntil: "domcontentloaded",
-			timeout: 60000,
+			timeout: 90000,
 		})
 
-		await page.waitForSelector("#login", { timeout: 30000 })
-		await page.fill("#login", process.env.MY_SITE_LOGIN)
-		await page.fill("#password", process.env.MY_SITE_PASSWORD)
-		await page.click('button[type="submit"]')
+		// Попробуем найти поля логина — если есть, логинимся
+		try {
+			await page.waitForSelector("#login", { timeout: 20000 })
+			console.log("fetchFromClientomer: login form found — filling credentials")
+			await page.fill("#login", process.env.MY_SITE_LOGIN || "")
+			await page.fill("#password", process.env.MY_SITE_PASSWORD || "")
+			await page.click('button[type="submit"]')
+		} catch (e) {
+			// поля логина нет — возможно уже залогинены
+			console.log(
+				"fetchFromClientomer: #login not found (maybe already logged in)"
+			)
+		}
 
-		await page.waitForURL(`**/${POINT_ID}`, { timeout: 45000 })
-		await page.waitForSelector(".guest-today__item-block", { timeout: 60000 })
+		// Немного подождём, затем дождёмся нужного блока
+		await page.waitForTimeout(1200)
+		try {
+			await page.waitForURL(`**/${POINT_ID}`, { timeout: 45000 })
+		} catch (e) {
+			console.log(
+				"fetchFromClientomer: waitForURL didn't match; current URL:",
+				page.url()
+			)
+		}
 
-		const firstText = await page.evaluate(() => {
-			const el = document.querySelector(".guest-today__item-block")
-			return el?.firstChild?.textContent?.trim() || ""
+		// Ждём наличия блока с данными (attach/visible)
+		try {
+			await page.waitForSelector(".guest-today__item-block", {
+				timeout: 30000,
+				state: "attached",
+			})
+		} catch (e) {
+			console.log(
+				"fetchFromClientomer: .guest-today__item-block not attached (page may differ). Current URL:",
+				page.url()
+			)
+		}
+
+		// Парсим нужные числа: только текстовую часть до <span>, разделяем по "/"
+		const parsed = await page.evaluate(() => {
+			const block = document.querySelector(".guest-today__item-block")
+			if (!block) return { ok: false, reason: "no_block" }
+
+			// Основной источник — первый текстовый узел перед span
+			let raw = ""
+			if (block.childNodes && block.childNodes.length > 0) {
+				// Найти первый текстовый узел, который не пустой
+				for (let i = 0; i < block.childNodes.length; i++) {
+					const node = block.childNodes[i]
+					if (
+						node.nodeType === Node.TEXT_NODE &&
+						(node.textContent || "").trim() !== ""
+					) {
+						raw = node.textContent || ""
+						break
+					}
+				}
+			}
+
+			// fallback: если не нашли текстовый узел — взять innerText всего блока и убрать span-строку
+			if (!raw) {
+				raw = (block.innerText || block.textContent || "").trim()
+				// innerText может содержать и значение из span, но разделитель '/' всё ещё присутствует
+			}
+
+			// Нормализуем NBSP и множественные пробелы
+			raw = raw
+				.replace(/\u00A0/g, " ")
+				.replace(/[^\S\r\n]+/g, " ")
+				.trim()
+
+			// Разделяем по "/" — ожидается формат "X / Y"
+			const parts = raw.split("/").map((s) => s.trim())
+
+			// Преобразуем в числа, безопасно
+			const inside = parts[0]
+				? parseInt(parts[0].replace(/[^\d-]/g, ""), 10)
+				: NaN
+			const waiting = parts[1]
+				? parseInt(parts[1].replace(/[^\d-]/g, ""), 10)
+				: NaN
+
+			// total из <span> (опционально)
+			const spanText = block.querySelector("span")?.textContent || ""
+			const total = spanText
+				? parseInt(spanText.replace(/[^\d-]/g, ""), 10)
+				: NaN
+
+			return {
+				ok: true,
+				raw,
+				inside: Number.isFinite(inside) ? inside : 0,
+				waiting: Number.isFinite(waiting) ? waiting : 0,
+				total: Number.isFinite(total) ? total : 0,
+			}
 		})
 
-		const match = firstText.match(/(\d+)\s*\/\s*(\d+)/)
-		if (!match)
-			throw new Error('Не найдены числа в блоке "guest-today__item-block"')
+		if (!parsed || !parsed.ok) {
+			// Сделаем скриншот для отладки
+			try {
+				const screenshotPath = `/tmp/clientomer_failed_${Date.now()}.png`
+				await page.screenshot({ path: screenshotPath, fullPage: true })
+				console.log(
+					"fetchFromClientomer: parsing failed — screenshot saved to",
+					screenshotPath
+				)
+			} catch (sErr) {
+				console.log(
+					"fetchFromClientomer: failed to make screenshot:",
+					sErr.message
+				)
+			}
+			throw new Error(
+				"Не удалось распарсить блок .guest-today__item-block (see logs / screenshot)"
+			)
+		}
 
+		console.log("fetchFromClientomer: parsed raw text:", parsed.raw)
+		console.log(
+			"fetchFromClientomer: result inside =",
+			parsed.inside,
+			"waiting =",
+			parsed.waiting,
+			"total =",
+			parsed.total
+		)
+
+		// Возвращаем только нужные поля
 		return {
-			inside: parseInt(match[1]),
-			waiting: parseInt(match[2]),
+			inside: parsed.inside,
+			waiting: parsed.waiting,
+			total: parsed.total,
 		}
 	} finally {
-		if (context) await context.close()
-		if (browser) await browser.close()
+		// аккуратно закрываем ресурсы
+		if (context) {
+			try {
+				await context.close()
+			} catch (e) {
+				console.log("Error closing context:", e.message)
+			}
+		}
+		if (browser) {
+			try {
+				await browser.close()
+			} catch (e) {
+				console.log("Error closing browser:", e.message)
+			}
+		}
 	}
 }
 
