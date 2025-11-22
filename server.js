@@ -77,6 +77,7 @@ app.get("/", (req, res) => {
 // Вспомогательная функция — попытка получения данных
 async function tryGetStats() {
 	let browser = null
+	let context = null
 	try {
 		browser = await chromium.launch({
 			headless: true,
@@ -90,10 +91,13 @@ async function tryGetStats() {
 			],
 		})
 
-		const page = await browser.newPage()
-		await page.setUserAgent(
-			"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-		)
+		context = await browser.newContext({
+			userAgent:
+				"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+			viewport: { width: 1920, height: 1080 },
+		})
+
+		const page = await context.newPage()
 
 		// 1. Открываем страницу
 		await page.goto(`https://cabinet.clientomer.ru/${POINT_ID}`, {
@@ -127,6 +131,7 @@ async function tryGetStats() {
 
 		return { inside, waiting }
 	} finally {
+		if (context) await context.close()
 		if (browser) await browser.close()
 	}
 }
