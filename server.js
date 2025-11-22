@@ -77,6 +77,37 @@ app.get("/", (req, res) => {
 })
 // Функция: получить данные с clientomer.ru
 async function fetchFromClientomer() {
+	const info = await page.evaluate(() => {
+		const el = document.querySelector(".guest-today__item-block")
+		return {
+			url: location.href,
+			innerHTML: el ? el.innerHTML : null,
+			innerText: el ? el.innerText : null,
+			textNodes: el
+				? Array.from(el.childNodes).map((n) => ({
+						type: n.nodeType,
+						text: (n.textContent || "").trim(),
+				  }))
+				: null,
+		}
+	})
+	console.log("DEBUG block info:", info)
+
+	const all = await page.evaluate(() => {
+		return Array.from(
+			document.querySelectorAll(".guest-today__item-block")
+		).map((el, i) => ({
+			idx: i,
+			innerHTML: el.innerHTML,
+			innerText: el.innerText,
+			textNodes: Array.from(el.childNodes).map((n) => ({
+				type: n.nodeType,
+				text: (n.textContent || "").trim(),
+			})),
+		}))
+	})
+	console.log("DEBUG all blocks:", all)
+
 	let browser = null
 	let context = null
 	try {
