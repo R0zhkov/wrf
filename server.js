@@ -9,7 +9,7 @@ const POINT_ID = process.env.POINT_ID || "125021"
 // Кеширование данных на 2 минуты
 let cachedData = null
 let lastFetchTime = 0
-const CACHE_TTL = 2 * 60 * 1000 // 2 минуты
+const CACHE_TTL = 5 * 60 * 1000 // 2 минуты
 
 // CORS для API
 app.use((req, res, next) => {
@@ -82,7 +82,7 @@ async function fetchFromClientomer() {
 	let browser = null
 	let context = null
 	try {
-		console.log("fetchFromClientomer: starting browser launch...")
+		console.log("🔧 Запускаем браузер в режиме эмуляции человека...")
 
 		browser = await chromium.launch({
 			headless: true,
@@ -92,72 +92,106 @@ async function fetchFromClientomer() {
 				"--disable-dev-shm-usage",
 				"--disable-gpu",
 				"--disable-web-security",
+				"--disable-features=VizDisplayCompositor",
+				"--disable-features=IsolateOrigins,site-per-process",
+				"--disable-blink-features=AutomationControlled",
 			],
 		})
 
+		// === Эмуляция "человеческого" браузера ===
 		context = await browser.newContext({
+			viewport: { width: 1920, height: 1080 },
 			userAgent:
 				"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+			locale: "ru-RU",
+			timezoneId: "Europe/Moscow",
+			permissions: ["geolocation", "notifications"],
+			extraHTTPHeaders: {
+				"Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+				Referer: "https://cabinet.clientomer.ru/",
+			},
+		})
+
+		// Обход детекторов headless
+		await context.addInitScript(() => {
+			// Скрыть признаки автоматизации
+			Object.defineProperty(navigator, "webdriver", { get: () => undefined })
+			window.chrome = { runtime: {} }
+			Object.defineProperty(navigator, "plugins", {
+				get: () => [1, 2, 3, 4, 5],
+			})
+			Object.defineProperty(navigator, "languages", {
+				get: () => ["ru-RU", "ru", "en"],
+			})
+			Object.defineProperty(Notification, "permission", {
+				get: () => "default",
+			})
 		})
 
 		const page = await context.newPage()
 		const targetUrl = `https://cabinet.clientomer.ru/${POINT_ID}`
-		console.log("fetchFromClientomer: goto", targetUrl)
+		console.log("🌐 Переходим на:", targetUrl)
 		await page.goto(targetUrl, {
 			waitUntil: "domcontentloaded",
 			timeout: 60000,
 		})
 
-		// Проверяем, есть ли форма логина
+		// Попытка входа
 		try {
 			await page.waitForSelector("#login", { timeout: 10000 })
-			console.log("fetchFromClientomer: login form found — filling credentials")
+			console.log("🔓 Найдена форма входа — логинимся...")
 			await page.fill("#login", process.env.MY_SITE_LOGIN || "")
 			await page.fill("#password", process.env.MY_SITE_PASSWORD || "")
 			await page.click('button[type="submit"]')
 		} catch (e) {
-			console.log(
-				"fetchFromClientomer: #login not found — assuming already logged in"
-			)
+			console.log("ℹ️ Форма входа не найдена — возможно, уже залогинены")
 		}
 
-		// 🔑 КЛЮЧЕВОЕ: ЖДЁМ, ПОКА ДАННЫЕ СТАНУТ АКТУАЛЬНЫМИ
-		console.log(
-			"Ожидание загрузки статистики (ожидаем inside > 0 или waiting > 0)..."
-		)
-		await page.waitForFunction(
-			() => {
-				const block = document.querySelector(".guest-today__item-block")
-				if (!block) return false
-
-				// Ищем первый текстовый узел
-				let raw = ""
-				for (const node of block.childNodes) {
-					if (node.nodeType === Node.TEXT_NODE) {
-						const t = (node.textContent || "").trim()
-						if (t) {
-							raw = t
-							break
+		// === ЖДЁМ ДАННЫЕ С ДИАГНОСТИКОЙ ===
+		console.log("⏳ Ожидание появления статистики (до 60 сек)...")
+		try {
+			await page.waitForFunction(
+				() => {
+					const block = document.querySelector(".guest-today__item-block")
+					if (!block) return false
+					let raw = ""
+					for (const node of block.childNodes) {
+						if (node.nodeType === Node.TEXT_NODE) {
+							const t = (node.textContent || "").trim()
+							if (t) {
+								raw = t
+								break
+							}
 						}
 					}
-				}
+					const match = raw.match(/(\d+)\s*\/\s*(\d+)/)
+					if (!match) return false
+					const inside = parseInt(match[1], 10)
+					const waiting = parseInt(match[2], 10)
+					return inside >= 0 || waiting > 0 // разрешаем inside=0, если waiting>0
+				},
+				{ timeout: 60000, polling: 2000 }
+			)
+		} catch (e) {
+			// === ДИАГНОСТИКА ПРИ ТАЙМАУТЕ ===
+			console.log("🚨 Таймаут! Собираем диагностические данные...")
+			console.log("URL:", page.url())
+			const title = await page.title()
+			console.log("Title:", title)
+			const html = await page.content()
+			console.log("HTML (первые 800 символов):", html.substring(0, 800))
 
-				const match = raw.match(/(\d+)\s*\/\s*(\d+)/)
-				if (!match) return false
+			// Скриншот в base64
+			const screenshot = await page.screenshot({ fullPage: true })
+			console.log("📸 base64 screenshot:", screenshot.toString("base64"))
 
-				const inside = parseInt(match[1], 10)
-				const waiting = parseInt(match[2], 10)
+			throw new Error("Данные не загрузились за 60 сек — см. логи выше")
+		}
 
-				return inside > 0 || waiting > 0 // ждём "живых" данных
-			},
-			{ timeout: 45000, polling: 1000 }
-		)
-
-		// Теперь парсим
+		// Парсим
 		const parsed = await page.evaluate(() => {
 			const block = document.querySelector(".guest-today__item-block")
-			if (!block) return { ok: false, reason: "no_block" }
-
+			if (!block) return { ok: false }
 			let raw = ""
 			for (const node of block.childNodes) {
 				if (node.nodeType === Node.TEXT_NODE) {
@@ -168,12 +202,8 @@ async function fetchFromClientomer() {
 					}
 				}
 			}
-
 			const match = raw.match(/(\d+)\s*\/\s*(\d+)/)
-			if (!match) {
-				return { ok: false, reason: "no_match", raw }
-			}
-
+			if (!match) return { ok: false, raw }
 			return {
 				ok: true,
 				raw,
@@ -182,24 +212,10 @@ async function fetchFromClientomer() {
 			}
 		})
 
-		if (!parsed.ok) {
-			throw new Error(
-				`Парсинг не удался: ${parsed.reason}, raw="${parsed.raw}"`
-			)
-		}
+		if (!parsed.ok) throw new Error(`Парсинг не удался: raw="${parsed.raw}"`)
 
-		console.log("fetchFromClientomer: parsed raw text:", parsed.raw)
-		console.log(
-			"fetchFromClientomer: result — inside =",
-			parsed.inside,
-			"waiting =",
-			parsed.waiting
-		)
-
-		return {
-			inside: parsed.inside,
-			waiting: parsed.waiting,
-		}
+		console.log("✅ Получены данные:", parsed.raw)
+		return { inside: parsed.inside, waiting: parsed.waiting }
 	} finally {
 		if (context) await context.close().catch(() => {})
 		if (browser) await browser.close().catch(() => {})
