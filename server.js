@@ -5,10 +5,11 @@ const { chromium } = require("playwright")
 const app = express()
 const PORT = parseInt(process.env.PORT || "3000")
 const POINT_ID = process.env.POINT_ID || "125021"
-const CACHE_TTL = 5 * 60 * 1000 // 5 минут
+const CACHE_TTL = 5 * 60 * 1000 // 5 минут — как и просил
 
 let cachedData = null
 let lastFetchTime = 0
+let isFetching = false // ← семафор
 
 // CORS
 app.use((req, res, next) => {
@@ -18,7 +19,7 @@ app.use((req, res, next) => {
 	next()
 })
 
-// Главная страница — стиль: кинотеатр + кухня
+// Главная страница
 app.get("/", (req, res) => {
 	res.send(`
     <!DOCTYPE html>
@@ -116,6 +117,7 @@ app.get("/", (req, res) => {
 async function fetchFromClientomer() {
 	let browser = null
 	let context = null
+	let page = null
 	try {
 		browser = await chromium.launch({
 			headless: true,
@@ -124,7 +126,12 @@ async function fetchFromClientomer() {
 				"--disable-setuid-sandbox",
 				"--disable-dev-shm-usage",
 				"--disable-gpu",
-				"--disable-web-security",
+				"--single-process", // ← критично для памяти
+				"--no-zygote",
+				"--disable-background-tasks",
+				"--disable-backgrounding-occluded-windows",
+				"--disable-renderer-backgrounding",
+				"--memory-pressure-off",
 				"--disable-features=VizDisplayCompositor",
 				"--disable-blink-features=AutomationControlled",
 			],
@@ -147,7 +154,7 @@ async function fetchFromClientomer() {
 			window.chrome = { runtime: {} }
 		})
 
-		const page = await context.newPage()
+		page = await context.newPage()
 		await page.goto(`https://cabinet.clientomer.ru/${POINT_ID}`, {
 			waitUntil: "domcontentloaded",
 			timeout: 60000,
@@ -191,7 +198,6 @@ async function fetchFromClientomer() {
 			const block = document.querySelector(".guest-today__item-block")
 			if (!block) return { ok: false }
 
-			// inside / waiting
 			let mainText = ""
 			for (const node of block.childNodes) {
 				if (node.nodeType === Node.TEXT_NODE) {
@@ -206,7 +212,6 @@ async function fetchFromClientomer() {
 			const inside = mainMatch ? parseInt(mainMatch[1], 10) : 0
 			const waiting = mainMatch ? parseInt(mainMatch[2], 10) : 0
 
-			// total из span.d-block
 			const span = block.querySelector("span.d-block")
 			const totalText = span ? span.textContent.trim() : ""
 			const total = totalText
@@ -224,12 +229,13 @@ async function fetchFromClientomer() {
 			total: result.total,
 		}
 	} finally {
+		if (page) await page.close().catch(() => {})
 		if (context) await context.close().catch(() => {})
 		if (browser) await browser.close().catch(() => {})
 	}
 }
 
-// API
+// API с семафором
 app.get("/api/stats", async (req, res) => {
 	const { MY_SITE_LOGIN, MY_SITE_PASSWORD } = process.env
 	if (!MY_SITE_LOGIN || !MY_SITE_PASSWORD) {
@@ -237,24 +243,38 @@ app.get("/api/stats", async (req, res) => {
 	}
 
 	const now = Date.now()
-	if (!cachedData || now - lastFetchTime > CACHE_TTL) {
-		console.log("🔄 Получаем данные с clientomer.ru...")
-		try {
-			cachedData = await fetchFromClientomer()
-			lastFetchTime = now
-			console.log("✅ Данные:", cachedData)
-		} catch (err) {
-			console.error("❌ Ошибка:", err.message)
-			return res.status(500).json({ error: err.message.substring(0, 200) })
-		}
-	} else {
-		console.log("📦 Используем кеш")
+
+	// Если кеш свежий — отдаём его
+	if (cachedData && now - lastFetchTime <= CACHE_TTL) {
+		return res.json(cachedData)
 	}
 
-	res.json(cachedData)
+	// Если уже кто-то обновляет — отдаём старые данные или ошибку
+	if (isFetching) {
+		if (cachedData) {
+			console.log("⏳ Используем кеш — обновление уже в процессе")
+			return res.json(cachedData)
+		}
+		return res.status(503).json({ error: "Сервис занят, попробуйте позже" })
+	}
+
+	// Запускаем обновление
+	isFetching = true
+	try {
+		console.log("🔄 Запускаем обновление данных...")
+		cachedData = await fetchFromClientomer()
+		lastFetchTime = now
+		console.log("✅ Данные обновлены:", cachedData)
+		res.json(cachedData)
+	} catch (err) {
+		console.error("❌ Ошибка при обновлении:", err.message)
+		res.status(500).json({ error: err.message.substring(0, 200) })
+	} finally {
+		isFetching = false
+	}
 })
 
 // Запуск
 app.listen(PORT, "0.0.0.0", () => {
-	console.log(`✅ Сервер на порту ${PORT}`)
+	console.log(`✅ Сервер запущен на порту ${PORT}`)
 })
