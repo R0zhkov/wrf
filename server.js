@@ -1,10 +1,6 @@
+// server.js — CommonJS (no top-level await)
 const express = require("express")
 const { chromium } = require("playwright")
-const browser = await chromium.launch({
-	executablePath: chromium.executablePath(),
-	headless: true,
-	args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
-})
 
 const app = express()
 const PORT = parseInt(process.env.PORT || "3000")
@@ -22,7 +18,6 @@ app.use((req, res, next) => {
 	}
 	next()
 })
-
 // Главная страница — HTML с автообновлением
 app.get("/", (req, res) => {
 	res.send(`
@@ -80,16 +75,13 @@ app.get("/", (req, res) => {
     </html>
   `)
 })
-
 // Функция: получить данные с clientomer.ru
 async function fetchFromClientomer() {
 	let browser = null
 	let context = null
 	try {
-		// === КЛЮЧЕВОЕ: отключаем headless_shell и используем обычный Chromium ===
 		browser = await chromium.launch({
 			headless: true,
-			// ← отключает headless_shell и системные браузеры
 			args: [
 				"--no-sandbox",
 				"--disable-setuid-sandbox",
@@ -107,23 +99,19 @@ async function fetchFromClientomer() {
 
 		const page = await context.newPage()
 
-		// 1. Открываем страницу
 		await page.goto(`https://cabinet.clientomer.ru/${POINT_ID}`, {
 			waitUntil: "domcontentloaded",
 			timeout: 60000,
 		})
 
-		// 2. Логинимся
 		await page.waitForSelector("#login", { timeout: 30000 })
 		await page.fill("#login", process.env.MY_SITE_LOGIN)
 		await page.fill("#password", process.env.MY_SITE_PASSWORD)
 		await page.click('button[type="submit"]')
 
-		// 3. Ждём загрузки личного кабинета
 		await page.waitForURL(`**/${POINT_ID}`, { timeout: 45000 })
 		await page.waitForSelector(".guest-today__item-block", { timeout: 60000 })
 
-		// 4. Извлекаем данные
 		const firstText = await page.evaluate(() => {
 			const el = document.querySelector(".guest-today__item-block")
 			return el?.firstChild?.textContent?.trim() || ""
