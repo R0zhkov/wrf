@@ -4,8 +4,11 @@ const { chromium } = require("playwright")
 const app = express()
 const PORT = parseInt(process.env.PORT || "3000")
 const POINT_ID = process.env.POINT_ID || "125021"
-const MAX_RETRIES = 3
-const RETRY_DELAY = 5000 // 5 сек между попытками
+
+// Кеширование на 2 минуты
+let cachedData = null
+let lastFetchTime = 0
+const CACHE_TTL = 2 * 60 * 1000 // 2 минуты
 
 // CORS для API
 app.use((req, res, next) => {
@@ -15,7 +18,7 @@ app.use((req, res, next) => {
 	next()
 })
 
-// Главная страница — HTML
+// Главная страница
 app.get("/", (req, res) => {
 	res.send(`
     <!DOCTYPE html>
@@ -45,7 +48,6 @@ app.get("/", (req, res) => {
           box-shadow: 0 4px 20px rgba(0,0,0,0.08);
         }
         .error { color: #ef4444; }
-        .loading { color: #6b7280; }
       </style>
     </head>
     <body>
@@ -74,12 +76,18 @@ app.get("/", (req, res) => {
   `)
 })
 
-// Вспомогательная функция — попытка получения данных
-async function tryGetStats() {
+// Функция парсинга
+async function fetchFromClientomer() {
 	let browser = null
 	let context = null
 	try {
+		// Явно используем установленный Chromium
+		const browserPath = chromium.executablePath()
+		console.log("🔍 Chromium path:", browserPath)
+		console.log("✅ Chromium exists?", require("fs").existsSync(browserPath))
+
 		browser = await chromium.launch({
+			executablePath: browserPath,
 			headless: true,
 			args: [
 				"--no-sandbox",
@@ -87,92 +95,72 @@ async function tryGetStats() {
 				"--disable-dev-shm-usage",
 				"--disable-gpu",
 				"--disable-web-security",
-				"--disable-features=VizDisplayCompositor",
 			],
 		})
 
 		context = await browser.newContext({
 			userAgent:
 				"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-			viewport: { width: 1920, height: 1080 },
 		})
 
 		const page = await context.newPage()
 
-		// 1. Открываем страницу
 		await page.goto(`https://cabinet.clientomer.ru/${POINT_ID}`, {
 			waitUntil: "domcontentloaded",
 			timeout: 60000,
 		})
 
-		// 2. Ждём форму
 		await page.waitForSelector("#login", { timeout: 30000 })
 		await page.fill("#login", process.env.MY_SITE_LOGIN)
 		await page.fill("#password", process.env.MY_SITE_PASSWORD)
 		await page.click('button[type="submit"]')
 
-		// 3. Ждём перехода внутрь (по URL)
 		await page.waitForURL(`**/${POINT_ID}`, { timeout: 45000 })
-
-		// 4. Ждём нужный блок
 		await page.waitForSelector(".guest-today__item-block", { timeout: 60000 })
 
-		// 5. Извлекаем данные
 		const firstText = await page.evaluate(() => {
 			const el = document.querySelector(".guest-today__item-block")
 			return el?.firstChild?.textContent?.trim() || ""
 		})
 
 		const match = firstText.match(/(\d+)\s*\/\s*(\d+)/)
-		if (!match) throw new Error("Не найдены числа в тексте")
+		if (!match) throw new Error("Не найдены числа в блоке")
 
-		const inside = parseInt(match[1])
-		const waiting = parseInt(match[2])
-
-		return { inside, waiting }
+		return {
+			inside: parseInt(match[1]),
+			waiting: parseInt(match[2]),
+		}
 	} finally {
 		if (context) await context.close()
 		if (browser) await browser.close()
 	}
 }
 
-// Основная функция с retry
-async function getStatsWithRetry() {
-	let lastError
-	for (let i = 1; i <= MAX_RETRIES; i++) {
-		try {
-			console.log(`Попытка ${i} из ${MAX_RETRIES}...`)
-			const result = await tryGetStats()
-			console.log("✅ Успешно получены данные:", result)
-			return result
-		} catch (err) {
-			lastError = err
-			console.error(`❌ Попытка ${i} провалилась:`, err.message)
-			if (i < MAX_RETRIES) {
-				await new Promise((r) => setTimeout(r, RETRY_DELAY))
-			}
-		}
-	}
-	throw lastError
-}
-
-// API-эндпоинт
+// API с кешированием
 app.get("/api/stats", async (req, res) => {
 	const { MY_SITE_LOGIN, MY_SITE_PASSWORD } = process.env
-
 	if (!MY_SITE_LOGIN || !MY_SITE_PASSWORD) {
 		return res
 			.status(500)
-			.json({ error: "Missing MY_SITE_LOGIN or MY_SITE_PASSWORD in env" })
+			.json({ error: "Missing MY_SITE_LOGIN or MY_SITE_PASSWORD" })
 	}
 
-	try {
-		const { inside, waiting } = await getStatsWithRetry()
-		res.json({ inside, waiting })
-	} catch (err) {
-		console.error("🔥 Фатальная ошибка после всех попыток:", err.message)
-		res.status(500).json({ error: err.message.substring(0, 200) }) // обрезаем длинные ошибки
+	const now = Date.now()
+	if (!cachedData || now - lastFetchTime > CACHE_TTL) {
+		try {
+			console.log("🔄 Запрашиваем свежие данные с clientomer.ru...")
+			cachedData = await fetchFromClientomer()
+			lastFetchTime = now
+			console.log("✅ Данные получены:", cachedData)
+		} catch (err) {
+			console.error("❌ Ошибка парсинга:", err.message)
+			return res.status(500).json({ error: err.message.substring(0, 200) })
+		}
+	} else {
+		console.log("📦 Используем кешированные данные")
 	}
+
+	res.json(cachedData)
 })
 
 app.listen(PORT, "0.0.0.0", () => {
