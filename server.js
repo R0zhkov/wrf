@@ -9,7 +9,7 @@ const POINT_ID = process.env.POINT_ID || "125021"
 // Кеширование данных на 2 минуты
 let cachedData = null
 let lastFetchTime = 0
-const CACHE_TTL = 2 * 60 * 1000 // 120 000 мс = 2 минуты
+const CACHE_TTL = 2 * 60 * 1000 // 2 минуты
 
 // CORS для API
 app.use((req, res, next) => {
@@ -18,7 +18,8 @@ app.use((req, res, next) => {
 	}
 	next()
 })
-// Главная страница — HTML с автообновлением
+
+// Главная страница
 app.get("/", (req, res) => {
 	res.send(`
     <!DOCTYPE html>
@@ -69,22 +70,19 @@ app.get("/", (req, res) => {
           }
         }
         fetchStats();
-        setInterval(fetchStats, 60000); // обновление раз в минуту
+        setInterval(fetchStats, 60000);
       </script>
     </body>
     </html>
   `)
 })
+
 // Функция: получить данные с clientomer.ru
 async function fetchFromClientomer() {
 	let browser = null
 	let context = null
 	try {
 		console.log("fetchFromClientomer: starting browser launch...")
-		console.log(
-			"PLAYWRIGHT_BROWSERS_PATH =",
-			process.env.PLAYWRIGHT_BROWSERS_PATH || "(not set)"
-		)
 
 		browser = await chromium.launch({
 			headless: true,
@@ -94,7 +92,6 @@ async function fetchFromClientomer() {
 				"--disable-dev-shm-usage",
 				"--disable-gpu",
 				"--disable-web-security",
-				"--disable-features=VizDisplayCompositor",
 			],
 		})
 
@@ -104,58 +101,63 @@ async function fetchFromClientomer() {
 		})
 
 		const page = await context.newPage()
-
 		const targetUrl = `https://cabinet.clientomer.ru/${POINT_ID}`
 		console.log("fetchFromClientomer: goto", targetUrl)
 		await page.goto(targetUrl, {
 			waitUntil: "domcontentloaded",
-			timeout: 90000,
+			timeout: 60000,
 		})
 
-		// Попробуем найти поля логина — если есть, логинимся
+		// Проверяем, есть ли форма логина
 		try {
-			await page.waitForSelector("#login", { timeout: 20000 })
+			await page.waitForSelector("#login", { timeout: 10000 })
 			console.log("fetchFromClientomer: login form found — filling credentials")
 			await page.fill("#login", process.env.MY_SITE_LOGIN || "")
 			await page.fill("#password", process.env.MY_SITE_PASSWORD || "")
 			await page.click('button[type="submit"]')
 		} catch (e) {
-			// поля логина нет — возможно уже залогинены
 			console.log(
-				"fetchFromClientomer: #login not found (maybe already logged in)"
+				"fetchFromClientomer: #login not found — assuming already logged in"
 			)
 		}
 
-		// Немного подождём, затем дождёмся нужного блока
-		await page.waitForTimeout(5000)
-		try {
-			await page.waitForURL(`**/${POINT_ID}`, { timeout: 45000 })
-		} catch (e) {
-			console.log(
-				"fetchFromClientomer: waitForURL didn't match; current URL:",
-				page.url()
-			)
-		}
+		// 🔑 КЛЮЧЕВОЕ: ЖДЁМ, ПОКА ДАННЫЕ СТАНУТ АКТУАЛЬНЫМИ
+		console.log(
+			"Ожидание загрузки статистики (ожидаем inside > 0 или waiting > 0)..."
+		)
+		await page.waitForFunction(
+			() => {
+				const block = document.querySelector(".guest-today__item-block")
+				if (!block) return false
 
-		// Ждём наличия блока с данными (attach/visible)
-		try {
-			await page.waitForSelector(".guest-today__item-block", {
-				timeout: 30000,
-				state: "attached",
-			})
-		} catch (e) {
-			console.log(
-				"fetchFromClientomer: .guest-today__item-block not attached (page may differ). Current URL:",
-				page.url()
-			)
-		}
+				// Ищем первый текстовый узел
+				let raw = ""
+				for (const node of block.childNodes) {
+					if (node.nodeType === Node.TEXT_NODE) {
+						const t = (node.textContent || "").trim()
+						if (t) {
+							raw = t
+							break
+						}
+					}
+				}
 
-		// Парсим нужные числа: только текстовую часть до <span>, разделяем по "/"
+				const match = raw.match(/(\d+)\s*\/\s*(\d+)/)
+				if (!match) return false
+
+				const inside = parseInt(match[1], 10)
+				const waiting = parseInt(match[2], 10)
+
+				return inside > 0 || waiting > 0 // ждём "живых" данных
+			},
+			{ timeout: 45000, polling: 1000 }
+		)
+
+		// Теперь парсим
 		const parsed = await page.evaluate(() => {
 			const block = document.querySelector(".guest-today__item-block")
 			if (!block) return { ok: false, reason: "no_block" }
 
-			// Только текст до первого <span> или другого элемента
 			let raw = ""
 			for (const node of block.childNodes) {
 				if (node.nodeType === Node.TEXT_NODE) {
@@ -167,91 +169,50 @@ async function fetchFromClientomer() {
 				}
 			}
 
-			if (!raw)
-				return { ok: false, reason: "no_text_node", innerHTML: block.innerHTML }
-
-			// Убираем всё, кроме цифр и "/"
-			const cleaned = raw
-				.replace(/[^\d\/]/g, " ")
-				.replace(/\s+/, " ")
-				.trim()
-			const parts = cleaned
-				.split("/")
-				.map((s) => s.trim())
-				.filter(Boolean)
-
-			if (parts.length < 2) {
-				return { ok: false, reason: "bad_format", raw, cleaned }
+			const match = raw.match(/(\d+)\s*\/\s*(\d+)/)
+			if (!match) {
+				return { ok: false, reason: "no_match", raw }
 			}
 
-			const inside = parseInt(parts[0], 10) || 0
-			const waiting = parseInt(parts[1], 10) || 0
-
-			return { ok: true, raw, inside, waiting }
+			return {
+				ok: true,
+				raw,
+				inside: parseInt(match[1], 10),
+				waiting: parseInt(match[2], 10),
+			}
 		})
 
-		if (!parsed || !parsed.ok) {
-			// Сделаем скриншот для отладки
-			try {
-				const screenshotPath = `/tmp/clientomer_failed_${Date.now()}.png`
-				await page.screenshot({ path: screenshotPath, fullPage: true })
-				console.log(
-					"fetchFromClientomer: parsing failed — screenshot saved to",
-					screenshotPath
-				)
-			} catch (sErr) {
-				console.log(
-					"fetchFromClientomer: failed to make screenshot:",
-					sErr.message
-				)
-			}
+		if (!parsed.ok) {
 			throw new Error(
-				"Не удалось распарсить блок .guest-today__item-block (see logs / screenshot)"
+				`Парсинг не удался: ${parsed.reason}, raw="${parsed.raw}"`
 			)
 		}
 
 		console.log("fetchFromClientomer: parsed raw text:", parsed.raw)
 		console.log(
-			"fetchFromClientomer: result inside =",
+			"fetchFromClientomer: result — inside =",
 			parsed.inside,
 			"waiting =",
-			parsed.waiting,
-			"total =",
-			parsed.total
+			parsed.waiting
 		)
 
-		// Возвращаем только нужные поля
 		return {
 			inside: parsed.inside,
 			waiting: parsed.waiting,
-			total: parsed.total,
 		}
 	} finally {
-		// аккуратно закрываем ресурсы
-		if (context) {
-			try {
-				await context.close()
-			} catch (e) {
-				console.log("Error closing context:", e.message)
-			}
-		}
-		if (browser) {
-			try {
-				await browser.close()
-			} catch (e) {
-				console.log("Error closing browser:", e.message)
-			}
-		}
+		if (context) await context.close().catch(() => {})
+		if (browser) await browser.close().catch(() => {})
 	}
 }
 
-// API-эндпоинт с кешированием
+// API с кешированием
 app.get("/api/stats", async (req, res) => {
 	const { MY_SITE_LOGIN, MY_SITE_PASSWORD } = process.env
 	if (!MY_SITE_LOGIN || !MY_SITE_PASSWORD) {
-		return res
-			.status(500)
-			.json({ error: "Missing MY_SITE_LOGIN or MY_SITE_PASSWORD in env" })
+		return res.status(500).json({
+			error: "Missing MY_SITE_LOGIN or MY_SITE_PASSWORD in env",
+		})
 	}
 
 	const now = Date.now()
