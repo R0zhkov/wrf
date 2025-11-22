@@ -1,5 +1,10 @@
 const express = require("express")
 const { chromium } = require("playwright")
+const browser = await chromium.launch({
+	executablePath: chromium.executablePath(),
+	headless: true,
+	args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+})
 
 const app = express()
 const PORT = parseInt(process.env.PORT || "3000")
