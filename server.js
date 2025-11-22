@@ -155,58 +155,39 @@ async function fetchFromClientomer() {
 			const block = document.querySelector(".guest-today__item-block")
 			if (!block) return { ok: false, reason: "no_block" }
 
-			// Основной источник — первый текстовый узел перед span
+			// Только текст до первого <span> или другого элемента
 			let raw = ""
-			if (block.childNodes && block.childNodes.length > 0) {
-				// Найти первый текстовый узел, который не пустой
-				for (let i = 0; i < block.childNodes.length; i++) {
-					const node = block.childNodes[i]
-					if (
-						node.nodeType === Node.TEXT_NODE &&
-						(node.textContent || "").trim() !== ""
-					) {
-						raw = node.textContent || ""
+			for (const node of block.childNodes) {
+				if (node.nodeType === Node.TEXT_NODE) {
+					const t = (node.textContent || "").trim()
+					if (t) {
+						raw = t
 						break
 					}
 				}
 			}
 
-			// fallback: если не нашли текстовый узел — взять innerText всего блока и убрать span-строку
-			if (!raw) {
-				raw = (block.innerText || block.textContent || "").trim()
-				// innerText может содержать и значение из span, но разделитель '/' всё ещё присутствует
-			}
+			if (!raw)
+				return { ok: false, reason: "no_text_node", innerHTML: block.innerHTML }
 
-			// Нормализуем NBSP и множественные пробелы
-			raw = raw
-				.replace(/\u00A0/g, " ")
-				.replace(/[^\S\r\n]+/g, " ")
+			// Убираем всё, кроме цифр и "/"
+			const cleaned = raw
+				.replace(/[^\d\/]/g, " ")
+				.replace(/\s+/, " ")
 				.trim()
+			const parts = cleaned
+				.split("/")
+				.map((s) => s.trim())
+				.filter(Boolean)
 
-			// Разделяем по "/" — ожидается формат "X / Y"
-			const parts = raw.split("/").map((s) => s.trim())
-
-			// Преобразуем в числа, безопасно
-			const inside = parts[0]
-				? parseInt(parts[0].replace(/[^\d-]/g, ""), 10)
-				: NaN
-			const waiting = parts[1]
-				? parseInt(parts[1].replace(/[^\d-]/g, ""), 10)
-				: NaN
-
-			// total из <span> (опционально)
-			const spanText = block.querySelector("span")?.textContent || ""
-			const total = spanText
-				? parseInt(spanText.replace(/[^\d-]/g, ""), 10)
-				: NaN
-
-			return {
-				ok: true,
-				raw,
-				inside: Number.isFinite(inside) ? inside : 0,
-				waiting: Number.isFinite(waiting) ? waiting : 0,
-				total: Number.isFinite(total) ? total : 0,
+			if (parts.length < 2) {
+				return { ok: false, reason: "bad_format", raw, cleaned }
 			}
+
+			const inside = parseInt(parts[0], 10) || 0
+			const waiting = parseInt(parts[1], 10) || 0
+
+			return { ok: true, raw, inside, waiting }
 		})
 
 		if (!parsed || !parsed.ok) {
