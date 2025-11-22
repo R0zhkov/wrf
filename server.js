@@ -5,10 +5,10 @@ const app = express()
 const PORT = parseInt(process.env.PORT || "3000")
 const POINT_ID = process.env.POINT_ID || "125021"
 
-// Кеширование на 2 минуты
+// Кеширование данных на 2 минуты
 let cachedData = null
 let lastFetchTime = 0
-const CACHE_TTL = 2 * 60 * 1000 // 2 минуты
+const CACHE_TTL = 2 * 60 * 1000 // 120 000 мс = 2 минуты
 
 // CORS для API
 app.use((req, res, next) => {
@@ -18,7 +18,7 @@ app.use((req, res, next) => {
 	next()
 })
 
-// Главная страница
+// Главная страница — HTML с автообновлением
 app.get("/", (req, res) => {
 	res.send(`
     <!DOCTYPE html>
@@ -69,32 +69,29 @@ app.get("/", (req, res) => {
           }
         }
         fetchStats();
-        setInterval(fetchStats, 60000);
+        setInterval(fetchStats, 60000); // обновление раз в минуту
       </script>
     </body>
     </html>
   `)
 })
 
-// Функция парсинга
+// Функция: получить данные с clientomer.ru
 async function fetchFromClientomer() {
 	let browser = null
 	let context = null
 	try {
-		// Явно используем установленный Chromium
-		const browserPath = chromium.executablePath()
-		console.log("🔍 Chromium path:", browserPath)
-		console.log("✅ Chromium exists?", require("fs").existsSync(browserPath))
-
+		// === КЛЮЧЕВОЕ: отключаем headless_shell и используем обычный Chromium ===
 		browser = await chromium.launch({
-			executablePath: browserPath,
 			headless: true,
+			channel: null, // ← отключает headless_shell и системные браузеры
 			args: [
 				"--no-sandbox",
 				"--disable-setuid-sandbox",
 				"--disable-dev-shm-usage",
 				"--disable-gpu",
 				"--disable-web-security",
+				"--disable-features=VizDisplayCompositor",
 			],
 		})
 
@@ -105,26 +102,31 @@ async function fetchFromClientomer() {
 
 		const page = await context.newPage()
 
+		// 1. Открываем страницу
 		await page.goto(`https://cabinet.clientomer.ru/${POINT_ID}`, {
 			waitUntil: "domcontentloaded",
 			timeout: 60000,
 		})
 
+		// 2. Логинимся
 		await page.waitForSelector("#login", { timeout: 30000 })
 		await page.fill("#login", process.env.MY_SITE_LOGIN)
 		await page.fill("#password", process.env.MY_SITE_PASSWORD)
 		await page.click('button[type="submit"]')
 
+		// 3. Ждём загрузки личного кабинета
 		await page.waitForURL(`**/${POINT_ID}`, { timeout: 45000 })
 		await page.waitForSelector(".guest-today__item-block", { timeout: 60000 })
 
+		// 4. Извлекаем данные
 		const firstText = await page.evaluate(() => {
 			const el = document.querySelector(".guest-today__item-block")
 			return el?.firstChild?.textContent?.trim() || ""
 		})
 
 		const match = firstText.match(/(\d+)\s*\/\s*(\d+)/)
-		if (!match) throw new Error("Не найдены числа в блоке")
+		if (!match)
+			throw new Error('Не найдены числа в блоке "guest-today__item-block"')
 
 		return {
 			inside: parseInt(match[1]),
@@ -136,24 +138,24 @@ async function fetchFromClientomer() {
 	}
 }
 
-// API с кешированием
+// API-эндпоинт с кешированием
 app.get("/api/stats", async (req, res) => {
 	const { MY_SITE_LOGIN, MY_SITE_PASSWORD } = process.env
 	if (!MY_SITE_LOGIN || !MY_SITE_PASSWORD) {
 		return res
 			.status(500)
-			.json({ error: "Missing MY_SITE_LOGIN or MY_SITE_PASSWORD" })
+			.json({ error: "Missing MY_SITE_LOGIN or MY_SITE_PASSWORD in env" })
 	}
 
 	const now = Date.now()
 	if (!cachedData || now - lastFetchTime > CACHE_TTL) {
+		console.log("🔄 Получаем свежие данные с clientomer.ru...")
 		try {
-			console.log("🔄 Запрашиваем свежие данные с clientomer.ru...")
 			cachedData = await fetchFromClientomer()
 			lastFetchTime = now
-			console.log("✅ Данные получены:", cachedData)
+			console.log("✅ Успешно получены данные:", cachedData)
 		} catch (err) {
-			console.error("❌ Ошибка парсинга:", err.message)
+			console.error("❌ Ошибка при парсинге:", err.message)
 			return res.status(500).json({ error: err.message.substring(0, 200) })
 		}
 	} else {
@@ -163,6 +165,7 @@ app.get("/api/stats", async (req, res) => {
 	res.json(cachedData)
 })
 
+// Запуск сервера
 app.listen(PORT, "0.0.0.0", () => {
 	console.log(`✅ Сервер запущен на порту ${PORT}`)
 })
