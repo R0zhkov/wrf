@@ -5,11 +5,10 @@ const { chromium } = require("playwright")
 const app = express()
 const PORT = parseInt(process.env.PORT || "3000")
 const POINT_ID = process.env.POINT_ID || "125021"
-const CACHE_TTL = 5 * 60 * 1000 // 5 минут — как и просил
-
+const CACHE_TTL = 5 * 60 * 1000 // 5 минут
 let cachedData = null
 let lastFetchTime = 0
-let isFetching = false // ← семафор
+let isFetching = false
 
 // CORS
 app.use((req, res, next) => {
@@ -19,14 +18,14 @@ app.use((req, res, next) => {
 	next()
 })
 
-// Главная страница
+// Главная страница — только "ожидают", на весь экран
 app.get("/", (req, res) => {
 	res.send(`
     <!DOCTYPE html>
     <html>
     <head>
       <meta charset="utf-8">
-      <title>Статистика</title>
+      <title>Ожидают</title>
       <meta name="viewport" content="width=device-width, initial-scale=1">
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -41,24 +40,17 @@ app.get("/", (req, res) => {
           align-items: center;
           padding: 20px;
         }
-        .numbers {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          height: 80vh;
-          text-align: center;
-        }
         .number {
-          font-size: min(20vw, 20vh);
+          font-size: min(60vw, 60vh);
           font-weight: 800;
-          line-height: 1.1;
-          text-shadow: 0 0 10px rgba(255,255,255,0.3);
+          line-height: 1;
+          text-align: center;
+          text-shadow: 0 0 20px rgba(255,255,255,0.4);
         }
         .label {
-          font-size: min(5vw, 5vh);
+          font-size: min(8vw, 8vh);
           opacity: 0.7;
-          margin-top: 8px;
+          margin-top: 20px;
         }
         .footer {
           font-size: min(4vw, 18px);
@@ -70,15 +62,9 @@ app.get("/", (req, res) => {
       </style>
     </head>
     <body>
-      <div class="numbers">
-        <div class="number" id="inside">--</div>
-        <div class="label">в зале</div>
-        
+      <div style="flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center;">
         <div class="number" id="waiting">--</div>
         <div class="label">ожидают</div>
-        
-        <div class="number" id="total">--</div>
-        <div class="label">всего</div>
       </div>
 
       <div class="footer">
@@ -90,19 +76,9 @@ app.get("/", (req, res) => {
           try {
             const res = await fetch('/api/stats');
             const data = await res.json();
-            if (data.error) {
-              document.getElementById('inside').textContent = '—';
-              document.getElementById('waiting').textContent = '—';
-              document.getElementById('total').textContent = '—';
-            } else {
-              document.getElementById('inside').textContent = data.inside || 0;
-              document.getElementById('waiting').textContent = data.waiting || 0;
-              document.getElementById('total').textContent = data.total || 0;
-            }
+            document.getElementById('waiting').textContent = data.waiting || 0;
           } catch (err) {
-            document.getElementById('inside').textContent = '—';
             document.getElementById('waiting').textContent = '—';
-            document.getElementById('total').textContent = '—';
           }
         }
         fetchStats();
@@ -113,7 +89,7 @@ app.get("/", (req, res) => {
   `)
 })
 
-// Парсинг с тремя цифрами
+// Парсинг (всё как раньше)
 async function fetchFromClientomer() {
 	let browser = null
 	let context = null
@@ -126,7 +102,7 @@ async function fetchFromClientomer() {
 				"--disable-setuid-sandbox",
 				"--disable-dev-shm-usage",
 				"--disable-gpu",
-				"--single-process", // ← критично для памяти
+				"--single-process",
 				"--no-zygote",
 				"--disable-background-tasks",
 				"--disable-backgrounding-occluded-windows",
@@ -160,7 +136,6 @@ async function fetchFromClientomer() {
 			timeout: 60000,
 		})
 
-		// Вход
 		try {
 			await page.waitForSelector("#login", { timeout: 10000 })
 			await page.fill("#login", process.env.MY_SITE_LOGIN)
@@ -170,7 +145,6 @@ async function fetchFromClientomer() {
 			console.log("Форма входа не найдена — возможно, уже залогинены")
 		}
 
-		// Ждём данные
 		await page.waitForFunction(
 			() => {
 				const block = document.querySelector(".guest-today__item-block")
@@ -193,7 +167,6 @@ async function fetchFromClientomer() {
 			{ timeout: 60000, polling: 2000 }
 		)
 
-		// Парсим все три значения
 		const result = await page.evaluate(() => {
 			const block = document.querySelector(".guest-today__item-block")
 			if (!block) return { ok: false }
@@ -235,7 +208,7 @@ async function fetchFromClientomer() {
 	}
 }
 
-// API с семафором
+// API — остаётся без изменений (возвращает все поля)
 app.get("/api/stats", async (req, res) => {
 	const { MY_SITE_LOGIN, MY_SITE_PASSWORD } = process.env
 	if (!MY_SITE_LOGIN || !MY_SITE_PASSWORD) {
@@ -243,38 +216,33 @@ app.get("/api/stats", async (req, res) => {
 	}
 
 	const now = Date.now()
-
-	// Если кеш свежий — отдаём его
 	if (cachedData && now - lastFetchTime <= CACHE_TTL) {
 		return res.json(cachedData)
 	}
 
-	// Если уже кто-то обновляет — отдаём старые данные или ошибку
 	if (isFetching) {
 		if (cachedData) {
 			console.log("⏳ Используем кеш — обновление уже в процессе")
 			return res.json(cachedData)
 		}
-		return res.status(503).json({ error: "Сервис занят, попробуйте позже" })
+		return res.status(503).json({ error: "Сервис занят" })
 	}
 
-	// Запускаем обновление
 	isFetching = true
 	try {
-		console.log("🔄 Запускаем обновление данных...")
+		console.log("🔄 Обновляем данные...")
 		cachedData = await fetchFromClientomer()
 		lastFetchTime = now
-		console.log("✅ Данные обновлены:", cachedData)
+		console.log("✅ Данные:", cachedData)
 		res.json(cachedData)
 	} catch (err) {
-		console.error("❌ Ошибка при обновлении:", err.message)
+		console.error("❌ Ошибка:", err.message)
 		res.status(500).json({ error: err.message.substring(0, 200) })
 	} finally {
 		isFetching = false
 	}
 })
 
-// Запуск
 app.listen(PORT, "0.0.0.0", () => {
 	console.log(`✅ Сервер запущен на порту ${PORT}`)
 })
