@@ -24,7 +24,7 @@
       body {
         background: #000;
         color: #fff;
-        font-family: "Open sans";
+        font-family: "Open Sans", sans-serif;
         font-weight: 300;
         display: flex;
         flex-direction: column;
@@ -84,24 +84,14 @@
 
     <div class="main-number" id="waiting">--</div>
 
-    <div class="metrics">
-      <div class="metric">
-        <div class="metric-value" id="bookings5to7">--</div>
-        <div class="metric-label">5–7 гостей</div>
-      </div>
-      <div class="metric">
-        <div class="metric-value" id="bookings8plus">--</div>
-        <div class="metric-label">8+ гостей</div>
-      </div>
-    </div>
+    <div class="metrics" id="metricsContainer"></div>
 
     <script>
       document.addEventListener("DOMContentLoaded", () => {
         const todayBtn = document.getElementById("today");
         const tomorrowBtn = document.getElementById("tomorrow");
         const waitingEl = document.getElementById("waiting");
-        const b5to7El = document.getElementById("bookings5to7");
-        const b8plusEl = document.getElementById("bookings8plus");
+        const metricsContainer = document.getElementById("metricsContainer");
 
         let selected = "today";
 
@@ -110,17 +100,39 @@
           tomorrowBtn.classList.toggle("active", btnId === "tomorrow");
         }
 
+        function renderMetrics(bookings5to7, bookings8plus) {
+          metricsContainer.innerHTML = "";
+
+          if (bookings5to7 > 0) {
+            const el = document.createElement("div");
+            el.className = "metric";
+            el.innerHTML = `
+              <div class="metric-value">${bookings5to7}</div>
+              <div class="metric-label">5–7 гостей</div>
+            `;
+            metricsContainer.appendChild(el);
+          }
+
+          if (bookings8plus > 0) {
+            const el = document.createElement("div");
+            el.className = "metric";
+            el.innerHTML = `
+              <div class="metric-value">${bookings8plus}</div>
+              <div class="metric-label">8+ гостей</div>
+            `;
+            metricsContainer.appendChild(el);
+          }
+        }
+
         async function fetchData() {
           try {
             const res = await fetch(`/api/stats?date=${selected}`);
             const data = await res.json();
             waitingEl.textContent = data.waiting || 0;
-            b5to7El.textContent = data.bookings5to7 || 0;
-            b8plusEl.textContent = data.bookings8plus || 0;
+            renderMetrics(data.bookings5to7 || 0, data.bookings8plus || 0);
           } catch (err) {
             waitingEl.textContent = "—";
-            b5to7El.textContent = "—";
-            b8plusEl.textContent = "—";
+            renderMetrics(0, 0);
           }
         }
 
