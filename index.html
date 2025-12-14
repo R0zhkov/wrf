@@ -16,29 +16,33 @@
         padding: 0;
         box-sizing: border-box;
       }
+      html,
+      body {
+        height: 100%;
+        overflow: hidden;
+      }
       body {
         background: #000;
         color: #fff;
         font-family: "Open sans";
         font-weight: 300;
-        min-height: 100vh;
         display: flex;
         flex-direction: column;
-        align-items: center;
-        padding: 16px;
+        justify-content: space-between;
+        padding: 12px;
       }
       .switch {
-        margin: 16px 0;
         display: flex;
-        gap: 12px;
+        gap: 8px;
+        justify-content: center;
       }
       .switch button {
-        padding: 8px 16px;
-        font-size: 16px;
+        padding: 6px 12px;
+        font-size: 14px;
         background: #333;
         color: #fff;
         border: 1px solid #666;
-        border-radius: 6px;
+        border-radius: 4px;
         cursor: pointer;
       }
       .switch button.active {
@@ -46,27 +50,29 @@
         border-color: #999;
       }
       .main-number {
-        font-size: min(60vw, 60vh);
+        font-size: min(50vw, 50vh);
         font-weight: 800;
         line-height: 1;
         text-align: center;
-        text-shadow: 0 0 20px rgba(255, 255, 255, 0.4);
+        text-shadow: 0 0 16px rgba(255, 255, 255, 0.4);
       }
       .metrics {
-        margin-top: 30px;
         display: flex;
-        flex-direction: column;
-        gap: 12px;
-        align-items: center;
+        justify-content: center;
+        gap: 24px;
       }
       .metric {
-        font-size: min(10vw, 10vh); /* ≈ 1/6 от main-number */
         text-align: center;
       }
+      .metric-value {
+        font-size: min(8vw, 8vh);
+        font-weight: 600;
+      }
       .metric-label {
-        font-size: min(3.5vw, 3.5vh);
+        font-size: min(2.8vw, 2.8vh);
         opacity: 0.7;
         margin-top: 4px;
+        white-space: nowrap;
       }
     </style>
   </head>
@@ -80,56 +86,60 @@
 
     <div class="metrics">
       <div class="metric">
-        <span id="bookings5to7">--</span>
-        <div class="metric-label">Количество броней на 5–7 человек</div>
+        <div class="metric-value" id="bookings5to7">--</div>
+        <div class="metric-label">5–7 гостей</div>
       </div>
       <div class="metric">
-        <span id="bookings8plus">--</span>
-        <div class="metric-label">Количество броней на 8+ человек</div>
+        <div class="metric-value" id="bookings8plus">--</div>
+        <div class="metric-label">8+ гостей</div>
       </div>
     </div>
 
     <script>
-      let selected = "today";
-      const todayBtn = document.getElementById("today");
-      const tomorrowBtn = document.getElementById("tomorrow");
+      document.addEventListener("DOMContentLoaded", () => {
+        const todayBtn = document.getElementById("today");
+        const tomorrowBtn = document.getElementById("tomorrow");
+        const waitingEl = document.getElementById("waiting");
+        const b5to7El = document.getElementById("bookings5to7");
+        const b8plusEl = document.getElementById("bookings8plus");
 
-      function setActive(btn) {
-        todayBtn.classList.remove("active");
-        tomorrowBtn.classList.remove("active");
-        btn.classList.add("active");
-      }
+        let selected = "today";
 
-      todayBtn.addEventListener("click", () => {
-        selected = "today";
-        setActive(todayBtn);
-        fetchData();
-      });
-
-      tomorrowBtn.addEventListener("click", () => {
-        selected = "tomorrow";
-        setActive(tomorrowBtn);
-        fetchData();
-      });
-
-      async function fetchData() {
-        try {
-          const res = await fetch(`/api/stats?date=${selected}`);
-          const data = await res.json();
-          document.getElementById("waiting").textContent = data.waiting || 0;
-          document.getElementById("bookings5to7").textContent =
-            data.bookings5to7 || 0;
-          document.getElementById("bookings8plus").textContent =
-            data.bookings8plus || 0;
-        } catch (err) {
-          document.getElementById("waiting").textContent = "—";
-          document.getElementById("bookings5to7").textContent = "—";
-          document.getElementById("bookings8plus").textContent = "—";
+        function setActive(btnId) {
+          todayBtn.classList.toggle("active", btnId === "today");
+          tomorrowBtn.classList.toggle("active", btnId === "tomorrow");
         }
-      }
 
-      fetchData();
-      setInterval(fetchData, 60000);
+        async function fetchData() {
+          try {
+            const res = await fetch(`/api/stats?date=${selected}`);
+            const data = await res.json();
+            waitingEl.textContent = data.waiting || 0;
+            b5to7El.textContent = data.bookings5to7 || 0;
+            b8plusEl.textContent = data.bookings8plus || 0;
+          } catch (err) {
+            waitingEl.textContent = "—";
+            b5to7El.textContent = "—";
+            b8plusEl.textContent = "—";
+          }
+        }
+
+        todayBtn.addEventListener("click", () => {
+          selected = "today";
+          setActive("today");
+          fetchData();
+        });
+
+        tomorrowBtn.addEventListener("click", () => {
+          selected = "tomorrow";
+          setActive("tomorrow");
+          fetchData();
+        });
+
+        setActive("today");
+        fetchData();
+        setInterval(fetchData, 60000);
+      });
     </script>
   </body>
 </html>
