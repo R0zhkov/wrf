@@ -37,7 +37,6 @@ export default async function handler(req, res) {
     const cookie = loginRes.headers.get("set-cookie")?.split(";")[0];
     if (!cookie) throw new Error("Не получена кука сессии");
 
-    // 2. Запрос данных
     const timestamp = Date.now();
     const apiUrl = `https://cabinet.clientomer.ru/${POINT_ID}/reserves.api.guestsreserves?timestamp=${timestamp}`;
     const apiRes = await fetch(apiUrl, {
@@ -61,10 +60,7 @@ export default async function handler(req, res) {
       const status = reserve.inner_status;
       const guests = reserve.guests_count || 0;
 
-      if (
-        date === targetDateStr &&
-        ["new", "waiting", "confirmed"].includes(status)
-      ) {
+      if (date === targetDateStr && ["confirmed"].includes(status)) {
         totalWaiting += guests;
 
         if (guests >= 5 && guests <= 7) {
