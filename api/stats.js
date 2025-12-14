@@ -60,7 +60,7 @@ export default async function handler(req, res) {
       const status = reserve.inner_status;
       const guests = reserve.guests_count || 0;
 
-      if (date === targetDateStr && ["confirmed"].includes(status)) {
+      if (date === targetDateStr && ["waiting", "confirmed"].includes(status)) {
         totalWaiting += guests;
 
         if (guests >= 5 && guests <= 7) {
