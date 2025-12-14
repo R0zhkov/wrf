@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,300..800;1,300..800&display=swap"
+      rel="stylesheet"
+    />
+    <meta charset="utf-8" />
+    <title>Ожидают</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        background: #000;
+        color: #fff;
+        font-family: "Open sans";
+        font-weight: 300;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 16px;
+      }
+      .switch {
+        margin: 16px 0;
+        display: flex;
+        gap: 12px;
+      }
+      .switch button {
+        padding: 8px 16px;
+        font-size: 16px;
+        background: #333;
+        color: #fff;
+        border: 1px solid #666;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .switch button.active {
+        background: #555;
+        border-color: #999;
+      }
+      .main-number {
+        font-size: min(60vw, 60vh);
+        font-weight: 800;
+        line-height: 1;
+        text-align: center;
+        text-shadow: 0 0 20px rgba(255, 255, 255, 0.4);
+      }
+      .metrics {
+        margin-top: 30px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        align-items: center;
+      }
+      .metric {
+        font-size: min(10vw, 10vh); /* ≈ 1/6 от main-number */
+        text-align: center;
+      }
+      .metric-label {
+        font-size: min(3.5vw, 3.5vh);
+        opacity: 0.7;
+        margin-top: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="switch">
+      <button id="today" class="active">Сегодня</button>
+      <button id="tomorrow">Завтра</button>
+    </div>
+
+    <div class="main-number" id="waiting">--</div>
+
+    <div class="metrics">
+      <div class="metric">
+        <span id="bookings5to7">--</span>
+        <div class="metric-label">Количество броней на 5–7 человек</div>
+      </div>
+      <div class="metric">
+        <span id="bookings8plus">--</span>
+        <div class="metric-label">Количество броней на 8+ человек</div>
+      </div>
+    </div>
+
+    <script>
+      let selected = "today";
+      const todayBtn = document.getElementById("today");
+      const tomorrowBtn = document.getElementById("tomorrow");
+
+      function setActive(btn) {
+        todayBtn.classList.remove("active");
+        tomorrowBtn.classList.remove("active");
+        btn.classList.add("active");
+      }
+
+      todayBtn.addEventListener("click", () => {
+        selected = "today";
+        setActive(todayBtn);
+        fetchData();
+      });
+
+      tomorrowBtn.addEventListener("click", () => {
+        selected = "tomorrow";
+        setActive(tomorrowBtn);
+        fetchData();
+      });
+
+      async function fetchData() {
+        try {
+          const res = await fetch(`/api/stats?date=${selected}`);
+          const data = await res.json();
+          document.getElementById("waiting").textContent = data.waiting || 0;
+          document.getElementById("bookings5to7").textContent =
+            data.bookings5to7 || 0;
+          document.getElementById("bookings8plus").textContent =
+            data.bookings8plus || 0;
+        } catch (err) {
+          document.getElementById("waiting").textContent = "—";
+          document.getElementById("bookings5to7").textContent = "—";
+          document.getElementById("bookings8plus").textContent = "—";
+        }
+      }
+
+      fetchData();
+      setInterval(fetchData, 60000);
+    </script>
+  </body>
+</html>
