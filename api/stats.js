@@ -1,21 +1,21 @@
 const LOGIN = process.env.MY_SITE_LOGIN;
 const PASSWORD = process.env.MY_SITE_PASSWORD;
-const POINT_ID = process.env.POINT_ID;
+const POINT_ID = process.env.POINT_ID || "125021";
+
+const CACHE = {};
+const CACHE_TTL = 2 * 60 * 1000;
 
 export default async function handler(req, res) {
   if (req.method !== "GET") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const inputMode = req.query.date || "today";
+  const mode = req.query.date || "today";
 
-  const now = new Date();
-  const mskDate = new Date(now.getTime() + 3 * 60 * 60 * 1000);
-  const targetDate = new Date(mskDate);
-  if (inputMode === "tomorrow") {
-    targetDate.setDate(targetDate.getDate() + 1);
+  const now = Date.now();
+  if (CACHE[mode] && now - CACHE[mode].timestamp < CACHE_TTL) {
+    return res.status(200).json(CACHE[mode].data);
   }
-  const targetDateStr = targetDate.toISOString().split("T")[0];
 
   try {
     const loginRes = await fetch(
@@ -49,7 +49,14 @@ export default async function handler(req, res) {
     });
 
     const data = await apiRes.json();
-    if (data.status !== "success") throw new Error("API error");
+    if (data.status !== "success") throw new Error("API вернул ошибку");
+
+    const nowMSK = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    const targetDate = new Date(nowMSK);
+    if (mode === "tomorrow") {
+      targetDate.setDate(targetDate.getDate() + 1);
+    }
+    const targetDateStr = targetDate.toISOString().split("T")[0];
 
     let totalWaiting = 0;
     let bookings5to7 = 0;
@@ -60,22 +67,25 @@ export default async function handler(req, res) {
       const status = reserve.inner_status;
       const guests = reserve.guests_count || 0;
 
-      if (date === targetDateStr && ["waiting", "confirmed"].includes(status)) {
+      if (
+        date === targetDateStr &&
+        ["new", "waiting", "confirmed"].includes(status)
+      ) {
         totalWaiting += guests;
-
-        if (guests >= 5 && guests <= 7) {
-          bookings5to7++;
-        } else if (guests >= 8) {
-          bookings8plus++;
-        }
+        if (guests >= 5 && guests <= 7) bookings5to7++;
+        if (guests >= 8) bookings8plus++;
       }
     }
 
-    res.status(200).json({
+    const result = {
       waiting: totalWaiting,
       bookings5to7,
       bookings8plus
-    });
+    };
+
+    CACHE[mode] = { data: result, timestamp: now };
+
+    res.status(200).json(result);
   } catch (err) {
     console.error("API error:", err.message);
     res.status(500).json({ error: err.message.substring(0, 200) });
